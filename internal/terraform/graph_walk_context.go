@@ -7,6 +7,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 
 	"github.com/hashicorp/terraform/internal/addrs"
+	"github.com/hashicorp/terraform/internal/checks"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/instances"
@@ -25,16 +26,16 @@ type ContextGraphWalker struct {
 
 	// Configurable values
 	Context            *Context
-	State              *states.SyncState                          // Used for safe concurrent access to state
-	RefreshState       *states.SyncState                          // Used for safe concurrent access to state
-	PrevRunState       *states.SyncState                          // Used for safe concurrent access to state
-	Changes            *plans.ChangesSync                         // Used for safe concurrent writes to changes
-	InstanceExpander   *instances.Expander                        // Tracks our gradual expansion of module and resource instances
-	MoveResults        map[addrs.UniqueKey]refactoring.MoveResult // Read-only record of earlier processing of move statements
+	State              *states.SyncState       // Used for safe concurrent access to state
+	RefreshState       *states.SyncState       // Used for safe concurrent access to state
+	PrevRunState       *states.SyncState       // Used for safe concurrent access to state
+	Changes            *plans.ChangesSync      // Used for safe concurrent writes to changes
+	Checks             *checks.State           // Used for safe concurrent writes of checkable objects and their check results
+	InstanceExpander   *instances.Expander     // Tracks our gradual expansion of module and resource instances
+	MoveResults        refactoring.MoveResults // Read-only record of earlier processing of move statements
 	Operation          walkOperation
 	StopContext        context.Context
 	RootVariableValues InputValues
-	Schemas            *Schemas
 	Config             *configs.Config
 
 	// This is an output. Do not set this, nor read it while a graph walk
@@ -81,7 +82,7 @@ func (w *ContextGraphWalker) EvalContext() EvalContext {
 		Operation:          w.Operation,
 		State:              w.State,
 		Changes:            w.Changes,
-		Schemas:            w.Schemas,
+		Plugins:            w.Context.plugins,
 		VariableValues:     w.variableValues,
 		VariableValuesLock: &w.variableValuesLock,
 	}
@@ -91,8 +92,7 @@ func (w *ContextGraphWalker) EvalContext() EvalContext {
 		Hooks:                 w.Context.hooks,
 		InputValue:            w.Context.uiInput,
 		InstanceExpanderValue: w.InstanceExpander,
-		Components:            w.Context.components,
-		Schemas:               w.Schemas,
+		Plugins:               w.Context.plugins,
 		MoveResultsValue:      w.MoveResults,
 		ProviderCache:         w.providerCache,
 		ProviderInputConfig:   w.Context.providerInputConfig,
@@ -100,6 +100,7 @@ func (w *ContextGraphWalker) EvalContext() EvalContext {
 		ProvisionerCache:      w.provisionerCache,
 		ProvisionerLock:       &w.provisionerLock,
 		ChangesValue:          w.Changes,
+		ChecksValue:           w.Checks,
 		StateValue:            w.State,
 		RefreshStateValue:     w.RefreshState,
 		PrevRunStateValue:     w.PrevRunState,

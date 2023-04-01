@@ -40,18 +40,12 @@ func (c *Context) Eval(config *configs.Config, state *states.State, moduleAddr a
 	var diags tfdiags.Diagnostics
 	defer c.acquireRun("eval")()
 
-	schemas, moreDiags := c.Schemas(config, state)
-	diags = diags.Append(moreDiags)
-	if moreDiags.HasErrors() {
-		return nil, diags
-	}
-
 	// Start with a copy of state so that we don't affect the instance that
 	// the caller is holding.
 	state = state.DeepCopy()
 	var walker *ContextGraphWalker
 
-	variables := mergeDefaultInputVariableValues(opts.SetVariables, config.Module.Variables)
+	variables := opts.SetVariables
 
 	// By the time we get here, we should have values defined for all of
 	// the root module variables, even if some of them are "unknown". It's the
@@ -66,10 +60,10 @@ func (c *Context) Eval(config *configs.Config, state *states.State, moduleAddr a
 	log.Printf("[DEBUG] Building and walking 'eval' graph")
 
 	graph, moreDiags := (&EvalGraphBuilder{
-		Config:     config,
-		State:      state,
-		Components: c.components,
-		Schemas:    schemas,
+		Config:             config,
+		State:              state,
+		RootVariableValues: variables,
+		Plugins:            c.plugins,
 	}).Build(addrs.RootModuleInstance)
 	diags = diags.Append(moreDiags)
 	if moreDiags.HasErrors() {
@@ -77,10 +71,8 @@ func (c *Context) Eval(config *configs.Config, state *states.State, moduleAddr a
 	}
 
 	walkOpts := &graphWalkOpts{
-		InputState:         state,
-		Config:             config,
-		Schemas:            schemas,
-		RootVariableValues: variables,
+		InputState: state,
+		Config:     config,
 	}
 
 	walker, moreDiags = c.walk(graph, walkEval, walkOpts)
@@ -100,5 +92,5 @@ func (c *Context) Eval(config *configs.Config, state *states.State, moduleAddr a
 	// caches its contexts, so we should get hold of the context that was
 	// previously used for evaluation here, unless we skipped walking.
 	evalCtx := walker.EnterPath(moduleAddr)
-	return evalCtx.EvaluationScope(nil, EvalDataForNoInstanceKey), diags
+	return evalCtx.EvaluationScope(nil, nil, EvalDataForNoInstanceKey), diags
 }

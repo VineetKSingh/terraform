@@ -389,6 +389,41 @@ func TestAssertPlanValid(t *testing.T) {
 			},
 		},
 
+		// but don't panic on a null list just in case
+		"nested list, null in config": {
+			&configschema.Block{
+				BlockTypes: map[string]*configschema.NestedBlock{
+					"b": {
+						Nesting: configschema.NestingList,
+						Block: configschema.Block{
+							Attributes: map[string]*configschema.Attribute{
+								"c": {
+									Type:     cty.String,
+									Optional: true,
+								},
+							},
+						},
+					},
+				},
+			},
+			cty.ObjectVal(map[string]cty.Value{
+				"b": cty.ListValEmpty(cty.Object(map[string]cty.Type{
+					"c": cty.String,
+				})),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"b": cty.NullVal(cty.List(cty.Object(map[string]cty.Type{
+					"c": cty.String,
+				}))),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"b": cty.ListValEmpty(cty.Object(map[string]cty.Type{
+					"c": cty.String,
+				})),
+			}),
+			nil,
+		},
+
 		// blocks can be unknown when using dynamic
 		"nested list, unknown nested dynamic": {
 			&configschema.Block{
@@ -1222,6 +1257,438 @@ func TestAssertPlanValid(t *testing.T) {
 			}),
 			[]string{`.bloop: planned value cty.ListVal([]cty.Value{cty.ObjectVal(map[string]cty.Value{"blop":cty.StringVal("ok")})}) for a non-computed attribute`},
 		},
+		"computed within nested objects": {
+			&configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"map": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingMap,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Computed: true,
+								},
+							},
+						},
+					},
+					// When an object has dynamic attrs, the map may be
+					// handled as an object.
+					"map_as_obj": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingMap,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Computed: true,
+								},
+							},
+						},
+					},
+					"list": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingList,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Computed: true,
+								},
+							},
+						},
+					},
+					"set": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingSet,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Computed: true,
+								},
+							},
+						},
+					},
+					"single": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingSingle,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.DynamicPseudoType,
+									Computed: true,
+								},
+							},
+						},
+					},
+				},
+			},
+			cty.NullVal(cty.Object(map[string]cty.Type{
+				"map": cty.Map(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				})),
+				"map_as_obj": cty.Map(cty.Object(map[string]cty.Type{
+					"name": cty.DynamicPseudoType,
+				})),
+				"list": cty.List(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				})),
+				"set": cty.Set(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				})),
+				"single": cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				}),
+			})),
+			cty.ObjectVal(map[string]cty.Value{
+				"map": cty.MapVal(map[string]cty.Value{
+					"one": cty.ObjectVal(map[string]cty.Value{
+						"name": cty.NullVal(cty.String),
+					}),
+				}),
+				"map_as_obj": cty.MapVal(map[string]cty.Value{
+					"one": cty.ObjectVal(map[string]cty.Value{
+						"name": cty.NullVal(cty.DynamicPseudoType),
+					}),
+				}),
+				"list": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"name": cty.NullVal(cty.String),
+					}),
+				}),
+				"set": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"name": cty.NullVal(cty.String),
+					}),
+				}),
+				"single": cty.ObjectVal(map[string]cty.Value{
+					"name": cty.NullVal(cty.String),
+				}),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"map": cty.MapVal(map[string]cty.Value{
+					"one": cty.ObjectVal(map[string]cty.Value{
+						"name": cty.NullVal(cty.String),
+					}),
+				}),
+				"map_as_obj": cty.ObjectVal(map[string]cty.Value{
+					"one": cty.ObjectVal(map[string]cty.Value{
+						"name": cty.StringVal("computed"),
+					}),
+				}),
+				"list": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"name": cty.NullVal(cty.String),
+					}),
+				}),
+				"set": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"name": cty.NullVal(cty.String),
+					}),
+				}),
+				"single": cty.ObjectVal(map[string]cty.Value{
+					"name": cty.NullVal(cty.String),
+				}),
+			}),
+			nil,
+		},
+		"computed nested objects": {
+			&configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"map": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingMap,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type: cty.String,
+								},
+							},
+						},
+						Computed: true,
+					},
+					"list": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingList,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type: cty.String,
+								},
+							},
+						},
+						Computed: true,
+					},
+					"set": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingSet,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type: cty.String,
+								},
+							},
+						},
+						Optional: true,
+						Computed: true,
+					},
+					"single": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingSingle,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type: cty.DynamicPseudoType,
+								},
+							},
+						},
+						Computed: true,
+					},
+				},
+			},
+			cty.NullVal(cty.Object(map[string]cty.Type{
+				"map": cty.Map(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				})),
+				"list": cty.List(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				})),
+				"set": cty.Set(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				})),
+				"single": cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				}),
+			})),
+			cty.ObjectVal(map[string]cty.Value{
+				"map": cty.NullVal(cty.Map(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				}))),
+				"list": cty.NullVal(cty.List(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				}))),
+				"set": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"name": cty.StringVal("from_config"),
+					}),
+				}),
+				"single": cty.NullVal(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				})),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"map": cty.MapVal(map[string]cty.Value{
+					"one": cty.UnknownVal(cty.Object(map[string]cty.Type{
+						"name": cty.String,
+					})),
+				}),
+				"list": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"name": cty.StringVal("computed"),
+					}),
+				}),
+				"set": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"name": cty.StringVal("from_config"),
+					}),
+				}),
+				"single": cty.UnknownVal(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				})),
+			}),
+			nil,
+		},
+		"optional computed within nested objects": {
+			&configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"map": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingMap,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Computed: true,
+								},
+							},
+						},
+					},
+					// When an object has dynamic attrs, the map may be
+					// handled as an object.
+					"map_as_obj": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingMap,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Optional: true,
+									Computed: true,
+								},
+							},
+						},
+					},
+					"list": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingList,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Optional: true,
+									Computed: true,
+								},
+							},
+						},
+					},
+					"set": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingSet,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Optional: true,
+									Computed: true,
+								},
+							},
+						},
+					},
+					"single": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingSingle,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.DynamicPseudoType,
+									Optional: true,
+									Computed: true,
+								},
+							},
+						},
+					},
+				},
+			},
+			cty.NullVal(cty.Object(map[string]cty.Type{
+				"map": cty.Map(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				})),
+				"map_as_obj": cty.Map(cty.Object(map[string]cty.Type{
+					"name": cty.DynamicPseudoType,
+				})),
+				"list": cty.List(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				})),
+				"set": cty.Set(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				})),
+				"single": cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				}),
+			})),
+			cty.ObjectVal(map[string]cty.Value{
+				"map": cty.MapVal(map[string]cty.Value{
+					"one": cty.ObjectVal(map[string]cty.Value{
+						"name": cty.StringVal("from_config"),
+					}),
+				}),
+				"map_as_obj": cty.MapVal(map[string]cty.Value{
+					"one": cty.ObjectVal(map[string]cty.Value{
+						"name": cty.NullVal(cty.DynamicPseudoType),
+					}),
+				}),
+				"list": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"name": cty.NullVal(cty.String),
+					}),
+				}),
+				"set": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"name": cty.NullVal(cty.String),
+					}),
+				}),
+				"single": cty.ObjectVal(map[string]cty.Value{
+					"name": cty.StringVal("from_config"),
+				}),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"map": cty.MapVal(map[string]cty.Value{
+					"one": cty.ObjectVal(map[string]cty.Value{
+						"name": cty.StringVal("from_config"),
+					}),
+				}),
+				"map_as_obj": cty.ObjectVal(map[string]cty.Value{
+					"one": cty.ObjectVal(map[string]cty.Value{
+						"name": cty.StringVal("computed"),
+					}),
+				}),
+				"list": cty.ListVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"name": cty.StringVal("computed"),
+					}),
+				}),
+				"set": cty.SetVal([]cty.Value{
+					cty.ObjectVal(map[string]cty.Value{
+						"name": cty.NullVal(cty.String),
+					}),
+				}),
+				"single": cty.ObjectVal(map[string]cty.Value{
+					"name": cty.StringVal("from_config"),
+				}),
+			}),
+			nil,
+		},
+		"cannot replace config nested attr": {
+			&configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"map": {
+						NestedType: &configschema.Object{
+							Nesting: configschema.NestingMap,
+							Attributes: map[string]*configschema.Attribute{
+								"name": {
+									Type:     cty.String,
+									Computed: true,
+									Optional: true,
+								},
+							},
+						},
+					},
+				},
+			},
+			cty.NullVal(cty.Object(map[string]cty.Type{
+				"map": cty.Map(cty.Object(map[string]cty.Type{
+					"name": cty.String,
+				})),
+			})),
+			cty.ObjectVal(map[string]cty.Value{
+				"map": cty.MapVal(map[string]cty.Value{
+					"one": cty.ObjectVal(map[string]cty.Value{
+						"name": cty.StringVal("from_config"),
+					}),
+				}),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"map": cty.MapVal(map[string]cty.Value{
+					"one": cty.ObjectVal(map[string]cty.Value{
+						"name": cty.StringVal("from_provider"),
+					}),
+				}),
+			}),
+			[]string{`.map.one.name: planned value cty.StringVal("from_provider") does not match config value cty.StringVal("from_config")`},
+		},
+
+		// If a config value ended up in a computed-only attribute it can still
+		// be a valid plan. We either got here because the user ignore warnings
+		// about ignore_changes on computed attributes, or we failed to
+		// validate a config with computed values. Either way, we don't want to
+		// indicate an error with the provider.
+		"computed only value with config": {
+			&configschema.Block{
+				Attributes: map[string]*configschema.Attribute{
+					"a": {
+						Type:     cty.String,
+						Computed: true,
+					},
+				},
+			},
+			cty.ObjectVal(map[string]cty.Value{
+				"a": cty.StringVal("old"),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"a": cty.StringVal("old"),
+			}),
+			cty.ObjectVal(map[string]cty.Value{
+				"a": cty.UnknownVal(cty.String),
+			}),
+			nil,
+		},
 	}
 
 	for name, test := range tests {
@@ -1239,7 +1706,7 @@ func TestAssertPlanValid(t *testing.T) {
 
 			t.Logf(
 				"\nprior:  %sconfig:  %splanned: %s",
-				dump.Value(test.Planned),
+				dump.Value(test.Prior),
 				dump.Value(test.Config),
 				dump.Value(test.Planned),
 			)

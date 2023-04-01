@@ -24,7 +24,10 @@ func TestModuleOverrideVariable(t *testing.T) {
 			Description:    "b_override description",
 			DescriptionSet: true,
 			Default:        cty.StringVal("b_override"),
+			Nullable:       false,
+			NullableSet:    true,
 			Type:           cty.String,
+			ConstraintType: cty.String,
 			ParsingMode:    VariableParseLiteral,
 			DeclRange: hcl.Range{
 				Filename: "testdata/valid-modules/override-variable/primary.tf",
@@ -45,7 +48,10 @@ func TestModuleOverrideVariable(t *testing.T) {
 			Description:    "base description",
 			DescriptionSet: true,
 			Default:        cty.StringVal("b_override partial"),
+			Nullable:       true,
+			NullableSet:    false,
 			Type:           cty.String,
+			ConstraintType: cty.String,
 			ParsingMode:    VariableParseLiteral,
 			DeclRange: hcl.Range{
 				Filename: "testdata/valid-modules/override-variable/primary.tf",
@@ -109,6 +115,26 @@ func TestModuleOverrideModule(t *testing.T) {
 				Line:   2,
 				Column: 17,
 				Byte:   17,
+			},
+		},
+		DependsOn: []hcl.Traversal{
+			{
+				hcl.TraverseRoot{
+					Name: "null_resource",
+					SrcRange: hcl.Range{
+						Filename: "testdata/valid-modules/override-module/primary.tf",
+						Start:    hcl.Pos{Line: 11, Column: 17, Byte: 149},
+						End:      hcl.Pos{Line: 11, Column: 30, Byte: 162},
+					},
+				},
+				hcl.TraverseAttr{
+					Name: "test",
+					SrcRange: hcl.Range{
+						Filename: "testdata/valid-modules/override-module/primary.tf",
+						Start:    hcl.Pos{Line: 11, Column: 30, Byte: 162},
+						End:      hcl.Pos{Line: 11, Column: 35, Byte: 167},
+					},
+				},
 			},
 		},
 		Providers: []PassedProviderConfig{
@@ -312,5 +338,15 @@ func TestModuleOverrideResourceFQNs(t *testing.T) {
 	}
 	if got.ProviderConfigRef != nil {
 		t.Fatalf("wrong result: found provider config ref %s, expected nil", got.ProviderConfigRef)
+	}
+}
+
+func TestModuleOverrideIgnoreAllChanges(t *testing.T) {
+	mod, diags := testModuleFromDir("testdata/valid-modules/override-ignore-changes")
+	assertNoDiagnostics(t, diags)
+
+	r := mod.ManagedResources["test_instance.foo"]
+	if !r.Managed.IgnoreAllChanges {
+		t.Fatalf("wrong result: expected r.Managed.IgnoreAllChanges to be true")
 	}
 }

@@ -31,7 +31,7 @@ func TestProviderTransformer(t *testing.T) {
 
 	g := testProviderTransformerGraph(t, mod)
 	{
-		transform := &MissingProviderTransformer{Providers: []string{"aws"}}
+		transform := &MissingProviderTransformer{}
 		if err := transform.Transform(g); err != nil {
 			t.Fatalf("err: %s", err)
 		}
@@ -49,58 +49,6 @@ func TestProviderTransformer(t *testing.T) {
 	}
 }
 
-func TestProviderTransformer_ImportModuleChild(t *testing.T) {
-	mod := testModule(t, "import-module")
-
-	g := testProviderTransformerGraph(t, mod)
-
-	{
-		tf := &ImportStateTransformer{
-			Config: mod,
-			Targets: []*ImportTarget{
-				&ImportTarget{
-					Addr: addrs.RootModuleInstance.
-						Child("child", addrs.NoKey).
-						ResourceInstance(
-							addrs.ManagedResourceMode,
-							"aws_instance",
-							"foo",
-							addrs.NoKey,
-						),
-					ID: "bar",
-				},
-			},
-		}
-
-		if err := tf.Transform(g); err != nil {
-			t.Fatalf("err: %s", err)
-		}
-		t.Logf("graph after ImportStateTransformer:\n%s", g.String())
-	}
-
-	{
-		tf := &MissingProviderTransformer{Providers: []string{"foo", "bar"}}
-		if err := tf.Transform(g); err != nil {
-			t.Fatalf("err: %s", err)
-		}
-		t.Logf("graph after MissingProviderTransformer:\n%s", g.String())
-	}
-
-	{
-		tf := &ProviderTransformer{}
-		if err := tf.Transform(g); err != nil {
-			t.Fatalf("err: %s", err)
-		}
-		t.Logf("graph after ProviderTransformer:\n%s", g.String())
-	}
-
-	actual := strings.TrimSpace(g.String())
-	expected := strings.TrimSpace(testTransformImportModuleChildStr)
-	if actual != expected {
-		t.Fatalf("wrong result\n\ngot:\n%s\n\nwant:\n%s", actual, expected)
-	}
-}
-
 // Test providers with FQNs that do not match the typeName
 func TestProviderTransformer_fqns(t *testing.T) {
 	for _, mod := range []string{"fqns", "fqns-module"} {
@@ -108,7 +56,7 @@ func TestProviderTransformer_fqns(t *testing.T) {
 
 		g := testProviderTransformerGraph(t, mod)
 		{
-			transform := &MissingProviderTransformer{Providers: []string{"aws"}, Config: mod}
+			transform := &MissingProviderTransformer{Config: mod}
 			if err := transform.Transform(g); err != nil {
 				t.Fatalf("err: %s", err)
 			}
@@ -132,7 +80,7 @@ func TestCloseProviderTransformer(t *testing.T) {
 	g := testProviderTransformerGraph(t, mod)
 
 	{
-		transform := &MissingProviderTransformer{Providers: []string{"aws"}}
+		transform := &MissingProviderTransformer{}
 		if err := transform.Transform(g); err != nil {
 			t.Fatalf("err: %s", err)
 		}
@@ -164,7 +112,7 @@ func TestCloseProviderTransformer_withTargets(t *testing.T) {
 
 	g := testProviderTransformerGraph(t, mod)
 	transforms := []GraphTransformer{
-		&MissingProviderTransformer{Providers: []string{"aws"}},
+		&MissingProviderTransformer{},
 		&ProviderTransformer{},
 		&CloseProviderTransformer{},
 		&TargetsTransformer{
@@ -194,7 +142,7 @@ func TestMissingProviderTransformer(t *testing.T) {
 
 	g := testProviderTransformerGraph(t, mod)
 	{
-		transform := &MissingProviderTransformer{Providers: []string{"aws", "foo", "bar"}}
+		transform := &MissingProviderTransformer{}
 		if err := transform.Transform(g); err != nil {
 			t.Fatalf("err: %s", err)
 		}
@@ -228,7 +176,7 @@ func TestMissingProviderTransformer_grandchildMissing(t *testing.T) {
 
 	g := testProviderTransformerGraph(t, mod)
 	{
-		transform := TransformProviders([]string{"aws", "foo", "bar"}, concrete, mod)
+		transform := transformProviders(concrete, mod)
 		if err := transform.Transform(g); err != nil {
 			t.Fatalf("err: %s", err)
 		}
@@ -252,7 +200,7 @@ func TestPruneProviderTransformer(t *testing.T) {
 
 	g := testProviderTransformerGraph(t, mod)
 	{
-		transform := &MissingProviderTransformer{Providers: []string{"foo"}}
+		transform := &MissingProviderTransformer{}
 		if err := transform.Transform(g); err != nil {
 			t.Fatalf("err: %s", err)
 		}
@@ -293,7 +241,7 @@ func TestProviderConfigTransformer_parentProviders(t *testing.T) {
 
 	g := testProviderTransformerGraph(t, mod)
 	{
-		tf := TransformProviders([]string{"aws"}, concrete, mod)
+		tf := transformProviders(concrete, mod)
 		if err := tf.Transform(g); err != nil {
 			t.Fatalf("err: %s", err)
 		}
@@ -313,7 +261,7 @@ func TestProviderConfigTransformer_grandparentProviders(t *testing.T) {
 
 	g := testProviderTransformerGraph(t, mod)
 	{
-		tf := TransformProviders([]string{"aws"}, concrete, mod)
+		tf := transformProviders(concrete, mod)
 		if err := tf.Transform(g); err != nil {
 			t.Fatalf("err: %s", err)
 		}
@@ -347,7 +295,7 @@ resource "test_object" "a" {
 
 	g := testProviderTransformerGraph(t, mod)
 	{
-		tf := TransformProviders([]string{"registry.terraform.io/hashicorp/test"}, concrete, mod)
+		tf := transformProviders(concrete, mod)
 		if err := tf.Transform(g); err != nil {
 			t.Fatalf("err: %s", err)
 		}
@@ -425,7 +373,7 @@ resource "test_object" "a" {
 
 	g := testProviderTransformerGraph(t, mod)
 	{
-		tf := TransformProviders([]string{"registry.terraform.io/hashicorp/test"}, concrete, mod)
+		tf := transformProviders(concrete, mod)
 		if err := tf.Transform(g); err != nil {
 			t.Fatalf("err: %s", err)
 		}
@@ -439,6 +387,42 @@ module.moda.test_object.a
 module.moda.test_object.x
   provider["registry.terraform.io/hashicorp/test"].z
 provider["registry.terraform.io/hashicorp/test"].z`
+
+	actual := strings.TrimSpace(g.String())
+	if actual != expected {
+		t.Fatalf("expected:\n%s\n\ngot:\n%s", expected, actual)
+	}
+}
+
+func TestProviderConfigTransformer_duplicateLocalName(t *testing.T) {
+	mod := testModuleInline(t, map[string]string{
+		"main.tf": `
+terraform {
+  required_providers {
+	# We have to allow this since it wasn't previously prevented. If the
+	# default config is equivalent to the provider config, the user may never
+	# see an error.
+    dupe = {
+      source = "registry.terraform.io/hashicorp/test"
+    }
+  }
+}
+
+provider "test" {
+}
+`})
+	concrete := func(a *NodeAbstractProvider) dag.Vertex { return a }
+
+	g := testProviderTransformerGraph(t, mod)
+	tf := ProviderConfigTransformer{
+		Config:   mod,
+		Concrete: concrete,
+	}
+	if err := tf.Transform(g); err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	expected := `provider["registry.terraform.io/hashicorp/test"]`
 
 	actual := strings.TrimSpace(g.String())
 	if actual != expected {
@@ -505,12 +489,3 @@ module.child.module.grandchild.aws_instance.baz
   provider["registry.terraform.io/hashicorp/aws"].foo
 provider["registry.terraform.io/hashicorp/aws"].foo
 `
-
-const testTransformImportModuleChildStr = `        
-module.child.aws_instance.foo
-  provider["registry.terraform.io/hashicorp/aws"]
-module.child.aws_instance.foo (import id "bar")
-  provider["registry.terraform.io/hashicorp/aws"]
-module.child.module.nested.aws_instance.foo
-  provider["registry.terraform.io/hashicorp/aws"]
-provider["registry.terraform.io/hashicorp/aws"]`

@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"io/ioutil"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,12 +13,10 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/hashicorp/go-version"
-	"github.com/hashicorp/terraform/internal/addrs"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configload"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
 	"github.com/hashicorp/terraform/internal/configs/hcl2shim"
-	"github.com/hashicorp/terraform/internal/depsfile"
 	"github.com/hashicorp/terraform/internal/plans"
 	"github.com/hashicorp/terraform/internal/plans/planfile"
 	"github.com/hashicorp/terraform/internal/providers"
@@ -42,14 +38,12 @@ var (
 func TestNewContextRequiredVersion(t *testing.T) {
 	cases := []struct {
 		Name    string
-		Module  string
 		Version string
 		Value   string
 		Err     bool
 	}{
 		{
 			"no requirement",
-			"",
 			"0.1.0",
 			"",
 			false,
@@ -57,7 +51,6 @@ func TestNewContextRequiredVersion(t *testing.T) {
 
 		{
 			"doesn't match",
-			"",
 			"0.1.0",
 			"> 0.6.0",
 			true,
@@ -65,25 +58,22 @@ func TestNewContextRequiredVersion(t *testing.T) {
 
 		{
 			"matches",
-			"",
 			"0.7.0",
 			"> 0.6.0",
 			false,
 		},
 
 		{
-			"module matches",
-			"context-required-version-module",
-			"0.5.0",
-			"",
-			false,
+			"prerelease doesn't match with inequality",
+			"0.8.0",
+			"> 0.7.0-beta",
+			true,
 		},
 
 		{
-			"module doesn't match",
-			"context-required-version-module",
-			"0.4.0",
-			"",
+			"prerelease doesn't match with equality",
+			"0.7.0",
+			"0.7.0-beta",
 			true,
 		},
 	}
@@ -95,11 +85,7 @@ func TestNewContextRequiredVersion(t *testing.T) {
 			tfversion.SemVer = version.Must(version.NewVersion(tc.Version))
 			defer func() { tfversion.SemVer = old }()
 
-			name := "context-required-version"
-			if tc.Module != "" {
-				name = tc.Module
-			}
-			mod := testModule(t, name)
+			mod := testModule(t, "context-required-version")
 			if tc.Value != "" {
 				constraint, err := version.NewConstraint(tc.Value)
 				if err != nil {
@@ -122,180 +108,141 @@ func TestNewContextRequiredVersion(t *testing.T) {
 	}
 }
 
-func TestNewContext_lockedDependencies(t *testing.T) {
-	configBeepGreaterThanOne := `
-terraform {
-  required_providers {
-    beep = {
-      source  = "example.com/foo/beep"
-      version = ">= 1.0.0"
-    }
-  }
+func TestNewContextRequiredVersion_child(t *testing.T) {
+	mod := testModuleInline(t, map[string]string{
+		"main.tf": `
+module "child" {
+  source = "./child"
 }
-`
-	configBeepLessThanOne := `
-terraform {
-  required_providers {
-    beep = {
-      source  = "example.com/foo/beep"
-      version = "< 1.0.0"
-    }
-  }
-}
-`
-	configBuiltin := `
-terraform {
-  required_providers {
-    terraform = {
-      source = "terraform.io/builtin/terraform"
-	}
-  }
-}
-`
-	locksBeepGreaterThanOne := `
-provider "example.com/foo/beep" {
-	version     = "1.0.0"
-	constraints = ">= 1.0.0"
-	hashes = [
-		"h1:does-not-match",
-	]
-}
-`
-	configBeepBoop := `
-terraform {
-  required_providers {
-    beep = {
-      source  = "example.com/foo/beep"
-      version = "< 1.0.0" # different from locks
-    }
-    boop = {
-      source  = "example.com/foo/boop"
-      version = ">= 2.0.0"
-    }
-  }
-}
-`
-	locksBeepBoop := `
-provider "example.com/foo/beep" {
-	version     = "1.0.0"
-	constraints = ">= 1.0.0"
-	hashes = [
-		"h1:does-not-match",
-	]
-}
-provider "example.com/foo/boop" {
-	version     = "2.3.4"
-	constraints = ">= 2.0.0"
-	hashes = [
-		"h1:does-not-match",
-	]
-}
-`
-	beepAddr := addrs.MustParseProviderSourceString("example.com/foo/beep")
-	boopAddr := addrs.MustParseProviderSourceString("example.com/foo/boop")
+`,
+		"child/main.tf": `
+terraform {}
+`,
+	})
 
-	testCases := map[string]struct {
-		Config       string
-		LockFile     string
-		DevProviders []addrs.Provider
-		WantErr      string
+	cases := map[string]struct {
+		Version    string
+		Constraint string
+		Err        bool
 	}{
-		"dependencies met": {
-			Config:   configBeepGreaterThanOne,
-			LockFile: locksBeepGreaterThanOne,
+		"matches": {
+			"0.5.0",
+			">= 0.5.0",
+			false,
 		},
-		"no locks given": {
-			Config: configBeepGreaterThanOne,
-		},
-		"builtin provider with empty locks": {
-			Config:   configBuiltin,
-			LockFile: `# This file is maintained automatically by "terraform init".`,
-		},
-		"multiple providers, one in development": {
-			Config:       configBeepBoop,
-			LockFile:     locksBeepBoop,
-			DevProviders: []addrs.Provider{beepAddr},
-		},
-		"development provider with empty locks": {
-			Config:       configBeepGreaterThanOne,
-			LockFile:     `# This file is maintained automatically by "terraform init".`,
-			DevProviders: []addrs.Provider{beepAddr},
-		},
-		"multiple providers, one in development, one missing": {
-			Config:       configBeepBoop,
-			LockFile:     locksBeepGreaterThanOne,
-			DevProviders: []addrs.Provider{beepAddr},
-			WantErr: `Provider requirements cannot be satisfied by locked dependencies: The following required providers are not installed:
-
-- example.com/foo/boop (>= 2.0.0)
-
-Please run "terraform init".`,
-		},
-		"wrong provider version": {
-			Config:   configBeepLessThanOne,
-			LockFile: locksBeepGreaterThanOne,
-			WantErr: `Provider requirements cannot be satisfied by locked dependencies: The following required providers are not installed:
-
-- example.com/foo/beep (< 1.0.0)
-
-Please run "terraform init".`,
-		},
-		"empty locks": {
-			Config:   configBeepGreaterThanOne,
-			LockFile: `# This file is maintained automatically by "terraform init".`,
-			WantErr: `Provider requirements cannot be satisfied by locked dependencies: The following required providers are not installed:
-
-- example.com/foo/beep (>= 1.0.0)
-
-Please run "terraform init".`,
+		"doesn't match": {
+			"0.4.0",
+			">= 0.5.0",
+			true,
 		},
 	}
-	for name, tc := range testCases {
+
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			var locks *depsfile.Locks
-			if tc.LockFile != "" {
-				var diags tfdiags.Diagnostics
-				locks, diags = depsfile.LoadLocksFromBytes([]byte(tc.LockFile), "test.lock.hcl")
-				if len(diags) > 0 {
-					t.Fatalf("unexpected error loading locks file: %s", diags.Err())
+			// Reset the version for the tests
+			old := tfversion.SemVer
+			tfversion.SemVer = version.Must(version.NewVersion(tc.Version))
+			defer func() { tfversion.SemVer = old }()
+
+			if tc.Constraint != "" {
+				constraint, err := version.NewConstraint(tc.Constraint)
+				if err != nil {
+					t.Fatalf("can't parse %q as version constraint", tc.Constraint)
 				}
+				child := mod.Children["child"]
+				child.Module.CoreVersionConstraints = append(child.Module.CoreVersionConstraints, configs.VersionConstraint{
+					Required: constraint,
+				})
 			}
-			devProviders := make(map[addrs.Provider]struct{})
-			for _, provider := range tc.DevProviders {
-				devProviders[provider] = struct{}{}
-			}
-			opts := &ContextOpts{
-				LockedDependencies:     locks,
-				ProvidersInDevelopment: devProviders,
-				Providers: map[addrs.Provider]providers.Factory{
-					beepAddr:                              testProviderFuncFixed(testProvider("beep")),
-					boopAddr:                              testProviderFuncFixed(testProvider("boop")),
-					addrs.NewBuiltInProvider("terraform"): testProviderFuncFixed(testProvider("terraform")),
-				},
-			}
-
-			m := testModuleInline(t, map[string]string{
-				"main.tf": tc.Config,
-			})
-
-			c, diags := NewContext(opts)
+			c, diags := NewContext(&ContextOpts{})
 			if diags.HasErrors() {
-				t.Fatalf("unexpected NewContext error: %s", diags.Err())
+				t.Fatalf("unexpected NewContext errors: %s", diags.Err())
 			}
 
-			diags = c.Validate(m)
-			if tc.WantErr != "" {
-				if len(diags) == 0 {
-					t.Fatal("expected diags but none returned")
-				}
-				if got, want := diags.Err().Error(), tc.WantErr; got != want {
-					t.Errorf("wrong diags\n got: %s\nwant: %s", got, want)
-				}
-			} else {
-				if len(diags) > 0 {
-					t.Errorf("unexpected diags: %s", diags.Err())
-				}
+			diags = c.Validate(mod)
+			if diags.HasErrors() != tc.Err {
+				t.Fatalf("err: %s", diags.Err())
 			}
+		})
+	}
+}
+
+func TestContext_missingPlugins(t *testing.T) {
+	ctx, diags := NewContext(&ContextOpts{})
+	assertNoDiagnostics(t, diags)
+
+	configSrc := `
+terraform {
+	required_providers {
+		explicit = {
+			source = "example.com/foo/beep"
+		}
+		builtin = {
+			source = "terraform.io/builtin/nonexist"
+		}
+	}
+}
+
+resource "implicit_thing" "a" {
+	provisioner "nonexist" {
+	}
+}
+
+resource "implicit_thing" "b" {
+	provider = implicit2
+}
+`
+
+	cfg := testModuleInline(t, map[string]string{
+		"main.tf": configSrc,
+	})
+
+	// Validate and Plan are the two entry points where we explicitly verify
+	// the available plugins match what the configuration needs. For other
+	// operations we typically fail more deeply in Terraform Core, with
+	// potentially-less-helpful error messages, because getting there would
+	// require doing some pretty weird things that aren't common enough to
+	// be worth the complexity to check for them.
+
+	validateDiags := ctx.Validate(cfg)
+	_, planDiags := ctx.Plan(cfg, nil, DefaultPlanOpts)
+
+	tests := map[string]tfdiags.Diagnostics{
+		"validate": validateDiags,
+		"plan":     planDiags,
+	}
+
+	for testName, gotDiags := range tests {
+		t.Run(testName, func(t *testing.T) {
+			var wantDiags tfdiags.Diagnostics
+			wantDiags = wantDiags.Append(
+				tfdiags.Sourceless(
+					tfdiags.Error,
+					"Missing required provider",
+					"This configuration requires built-in provider terraform.io/builtin/nonexist, but that provider isn't available in this Terraform version.",
+				),
+				tfdiags.Sourceless(
+					tfdiags.Error,
+					"Missing required provider",
+					"This configuration requires provider example.com/foo/beep, but that provider isn't available. You may be able to install it automatically by running:\n  terraform init",
+				),
+				tfdiags.Sourceless(
+					tfdiags.Error,
+					"Missing required provider",
+					"This configuration requires provider registry.terraform.io/hashicorp/implicit, but that provider isn't available. You may be able to install it automatically by running:\n  terraform init",
+				),
+				tfdiags.Sourceless(
+					tfdiags.Error,
+					"Missing required provider",
+					"This configuration requires provider registry.terraform.io/hashicorp/implicit2, but that provider isn't available. You may be able to install it automatically by running:\n  terraform init",
+				),
+				tfdiags.Sourceless(
+					tfdiags.Error,
+					"Missing required provisioner plugin",
+					`This configuration requires provisioner plugin "nonexist", which isn't available. If you're intending to use an external provisioner plugin, you must install it manually into one of the plugin search directories before running Terraform.`,
+				),
+			)
+			assertDiagnosticsMatch(t, gotDiags, wantDiags)
 		})
 	}
 }
@@ -362,6 +309,14 @@ func testApplyFn(req providers.ApplyResourceChangeRequest) (resp providers.Apply
 
 func testDiffFn(req providers.PlanResourceChangeRequest) (resp providers.PlanResourceChangeResponse) {
 	var planned map[string]cty.Value
+
+	// this is a destroy plan
+	if req.ProposedNewState.IsNull() {
+		resp.PlannedState = req.ProposedNewState
+		resp.PlannedPrivate = req.PriorPrivate
+		return resp
+	}
+
 	if !req.ProposedNewState.IsNull() {
 		planned = req.ProposedNewState.AsValueMap()
 	}
@@ -713,8 +668,8 @@ func testProviderSchema(name string) *providers.GetProviderSchemaResponse {
 	})
 }
 
-// contextForPlanViaFile is a helper that creates a temporary plan file, then
-// reads it back in again and produces a ContextOpts object containing the
+// contextOptsForPlanViaFile is a helper that creates a temporary plan file,
+// then reads it back in again and produces a ContextOpts object containing the
 // planned changes, prior state and config from the plan file.
 //
 // This is intended for testing the separated plan/apply workflow in a more
@@ -723,12 +678,8 @@ func testProviderSchema(name string) *providers.GetProviderSchemaResponse {
 // our context tests try to exercise lots of stuff at once and so having them
 // round-trip things through on-disk files is often an important part of
 // fully representing an old bug in a regression test.
-func contextOptsForPlanViaFile(configSnap *configload.Snapshot, plan *plans.Plan) (*ContextOpts, *configs.Config, *plans.Plan, error) {
-	dir, err := ioutil.TempDir("", "terraform-contextForPlanViaFile")
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	defer os.RemoveAll(dir)
+func contextOptsForPlanViaFile(t *testing.T, configSnap *configload.Snapshot, plan *plans.Plan) (*ContextOpts, *configs.Config, *plans.Plan, error) {
+	dir := t.TempDir()
 
 	// We'll just create a dummy statefile.File here because we're not going
 	// to run through any of the codepaths that care about Lineage/Serial/etc
@@ -755,7 +706,12 @@ func contextOptsForPlanViaFile(configSnap *configload.Snapshot, plan *plans.Plan
 	}
 
 	filename := filepath.Join(dir, "tfplan")
-	err = planfile.Create(filename, configSnap, prevStateFile, stateFile, plan)
+	err := planfile.Create(filename, planfile.CreateArgs{
+		ConfigSnapshot:       configSnap,
+		PreviousRunStateFile: prevStateFile,
+		StateFile:            stateFile,
+		Plan:                 plan,
+	})
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -775,9 +731,13 @@ func contextOptsForPlanViaFile(configSnap *configload.Snapshot, plan *plans.Plan
 		return nil, nil, nil, err
 	}
 
-	return &ContextOpts{
-		ProviderSHA256s: plan.ProviderSHA256s,
-	}, config, plan, nil
+	// Note: This has grown rather silly over the course of ongoing refactoring,
+	// because ContextOpts is no longer actually responsible for carrying
+	// any information from a plan file and instead all of the information
+	// lives inside the config and plan objects. We continue to return a
+	// silly empty ContextOpts here just to keep all of the calling tests
+	// working.
+	return &ContextOpts{}, config, plan, nil
 }
 
 // legacyPlanComparisonString produces a string representation of the changes
@@ -988,6 +948,24 @@ func assertNoErrors(t *testing.T, diags tfdiags.Diagnostics) {
 	}
 	logDiagnostics(t, diags)
 	t.FailNow()
+}
+
+// assertDiagnosticsMatch fails the test in progress (using t.Fatal) if the
+// two sets of diagnostics don't match after being normalized using the
+// "ForRPC" processing step, which eliminates the specific type information
+// and HCL expression information of each diagnostic.
+//
+// assertDiagnosticsMatch sorts the two sets of diagnostics in the usual way
+// before comparing them, though diagnostics only have a partial order so that
+// will not totally normalize the ordering of all diagnostics sets.
+func assertDiagnosticsMatch(t *testing.T, got, want tfdiags.Diagnostics) {
+	got = got.ForRPC()
+	want = want.ForRPC()
+	got.Sort()
+	want.Sort()
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("wrong diagnostics\n%s", diff)
+	}
 }
 
 // logDiagnostics is a test helper that logs the given diagnostics to to the

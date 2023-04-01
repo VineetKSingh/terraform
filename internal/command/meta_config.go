@@ -9,11 +9,9 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
-	"github.com/hashicorp/terraform-config-inspect/tfconfig"
 	"github.com/hashicorp/terraform/internal/configs"
 	"github.com/hashicorp/terraform/internal/configs/configload"
 	"github.com/hashicorp/terraform/internal/configs/configschema"
-	"github.com/hashicorp/terraform/internal/earlyconfig"
 	"github.com/hashicorp/terraform/internal/initwd"
 	"github.com/hashicorp/terraform/internal/registry"
 	"github.com/hashicorp/terraform/internal/terraform"
@@ -27,27 +25,8 @@ import (
 // paths used to load configuration, because we want to prefer recording
 // relative paths in source code references within the configuration.
 func (m *Meta) normalizePath(path string) string {
-	var err error
-
-	// First we will make it absolute so that we have a consistent place
-	// to start.
-	path, err = filepath.Abs(path)
-	if err != nil {
-		// We'll just accept what we were given, then.
-		return path
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil || !filepath.IsAbs(cwd) {
-		return path
-	}
-
-	ret, err := filepath.Rel(cwd, path)
-	if err != nil {
-		return path
-	}
-
-	return ret
+	m.fixupMissingWorkingDir()
+	return m.WorkingDir.NormalizePath(path)
 }
 
 // loadConfig reads a configuration from the given directory, which should
@@ -91,31 +70,6 @@ func (m *Meta) loadSingleModule(dir string) (*configs.Module, tfdiags.Diagnostic
 	return module, diags
 }
 
-// loadSingleModuleEarly is a variant of loadSingleModule that uses the special
-// "early config" loader that is more forgiving of unexpected constructs and
-// legacy syntax.
-//
-// Early-loaded config is not registered in the source code cache, so
-// diagnostics produced from it may render without source code snippets. In
-// practice this is not a big concern because the early config loader also
-// cannot generate detailed source locations, so it prefers to produce
-// diagnostics without explicit source location information and instead includes
-// approximate locations in the message text.
-//
-// Most callers should use loadConfig. This method exists to support early
-// initialization use-cases where the root module must be inspected in order
-// to determine what else needs to be installed before the full configuration
-// can be used.
-func (m *Meta) loadSingleModuleEarly(dir string) (*tfconfig.Module, tfdiags.Diagnostics) {
-	var diags tfdiags.Diagnostics
-	dir = m.normalizePath(dir)
-
-	module, moreDiags := earlyconfig.LoadModule(dir)
-	diags = diags.Append(moreDiags)
-
-	return module, diags
-}
-
 // dirIsConfigPath checks if the given path is a directory that contains at
 // least one Terraform configuration file (.tf or .tf.json), returning true
 // if so.
@@ -155,6 +109,12 @@ func (m *Meta) loadBackendConfig(rootDir string) (*configs.Backend, tfdiags.Diag
 	if diags.HasErrors() {
 		return nil, diags
 	}
+
+	if mod.CloudConfig != nil {
+		backendConfig := mod.CloudConfig.ToBackendConfig()
+		return &backendConfig, nil
+	}
+
 	return mod.Backend, nil
 }
 
@@ -177,26 +137,43 @@ func (m *Meta) loadHCLFile(filename string) (hcl.Body, tfdiags.Diagnostics) {
 }
 
 // installModules reads a root module from the given directory and attempts
-// recursively install all of its descendent modules.
+// recursively to install all of its descendent modules.
 //
 // The given hooks object will be notified of installation progress, which
-// can then be relayed to the end-user. The moduleUiInstallHooks type in
+// can then be relayed to the end-user. The uiModuleInstallHooks type in
 // this package has a reasonable implementation for displaying notifications
 // via a provided cli.Ui.
-func (m *Meta) installModules(rootDir string, upgrade bool, hooks initwd.ModuleInstallHooks) tfdiags.Diagnostics {
-	var diags tfdiags.Diagnostics
+func (m *Meta) installModules(rootDir string, upgrade bool, hooks initwd.ModuleInstallHooks) (abort bool, diags tfdiags.Diagnostics) {
 	rootDir = m.normalizePath(rootDir)
 
 	err := os.MkdirAll(m.modulesDir(), os.ModePerm)
 	if err != nil {
 		diags = diags.Append(fmt.Errorf("failed to create local modules directory: %s", err))
-		return diags
+		return true, diags
 	}
 
-	inst := m.moduleInstaller()
-	_, moreDiags := inst.InstallModules(rootDir, upgrade, hooks)
+	loader, err := m.initConfigLoader()
+	if err != nil {
+		diags = diags.Append(err)
+		return true, diags
+	}
+
+	inst := initwd.NewModuleInstaller(m.modulesDir(), loader, m.registryClient())
+
+	// Installation can be aborted by interruption signals
+	ctx, done := m.InterruptibleContext()
+	defer done()
+
+	_, moreDiags := inst.InstallModules(ctx, rootDir, upgrade, hooks)
 	diags = diags.Append(moreDiags)
-	return diags
+
+	if ctx.Err() == context.Canceled {
+		m.showDiagnostics(diags)
+		m.Ui.Error("Module installation was canceled by an interrupt signal.")
+		return true, diags
+	}
+
+	return false, diags
 }
 
 // initDirFromModule initializes the given directory (which should be
@@ -205,15 +182,29 @@ func (m *Meta) installModules(rootDir string, upgrade bool, hooks initwd.ModuleI
 //
 // Internally this runs similar steps to installModules.
 // The given hooks object will be notified of installation progress, which
-// can then be relayed to the end-user. The moduleUiInstallHooks type in
+// can then be relayed to the end-user. The uiModuleInstallHooks type in
 // this package has a reasonable implementation for displaying notifications
 // via a provided cli.Ui.
-func (m *Meta) initDirFromModule(targetDir string, addr string, hooks initwd.ModuleInstallHooks) tfdiags.Diagnostics {
-	var diags tfdiags.Diagnostics
+func (m *Meta) initDirFromModule(targetDir string, addr string, hooks initwd.ModuleInstallHooks) (abort bool, diags tfdiags.Diagnostics) {
+	// Installation can be aborted by interruption signals
+	ctx, done := m.InterruptibleContext()
+	defer done()
+
+	loader, err := m.initConfigLoader()
+	if err != nil {
+		diags = diags.Append(err)
+		return true, diags
+	}
+
 	targetDir = m.normalizePath(targetDir)
-	moreDiags := initwd.DirFromModule(targetDir, m.modulesDir(), addr, m.registryClient(), hooks)
+	moreDiags := initwd.DirFromModule(ctx, loader, targetDir, m.modulesDir(), addr, m.registryClient(), hooks)
 	diags = diags.Append(moreDiags)
-	return diags
+	if ctx.Err() == context.Canceled {
+		m.showDiagnostics(diags)
+		m.Ui.Error("Module initialization was canceled by an interrupt signal.")
+		return true, diags
+	}
+	return false, diags
 }
 
 // inputForSchema uses interactive prompts to try to populate any
@@ -328,19 +319,13 @@ func (m *Meta) initConfigLoader() (*configload.Loader, error) {
 		if err != nil {
 			return nil, err
 		}
+		loader.AllowLanguageExperiments(m.AllowExperimentalFeatures)
 		m.configLoader = loader
 		if m.View != nil {
 			m.View.SetConfigSources(loader.Sources)
 		}
 	}
 	return m.configLoader, nil
-}
-
-// moduleInstaller instantiates and returns a module installer for use by
-// "terraform init" (directly or indirectly).
-func (m *Meta) moduleInstaller() *initwd.ModuleInstaller {
-	reg := m.registryClient()
-	return initwd.NewModuleInstaller(m.modulesDir(), reg)
 }
 
 // registryClient instantiates and returns a new Terraform Registry client.

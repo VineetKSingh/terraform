@@ -25,7 +25,7 @@ func TestEvaluatorGetTerraformAttr(t *testing.T) {
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil)
+	scope := evaluator.Scope(data, nil, nil)
 
 	t.Run("workspace", func(t *testing.T) {
 		want := cty.StringVal("foo")
@@ -55,7 +55,7 @@ func TestEvaluatorGetPathAttr(t *testing.T) {
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil)
+	scope := evaluator.Scope(data, nil, nil)
 
 	t.Run("module", func(t *testing.T) {
 		want := cty.StringVal("bar/baz")
@@ -95,15 +95,19 @@ func TestEvaluatorGetInputVariable(t *testing.T) {
 			Module: &configs.Module{
 				Variables: map[string]*configs.Variable{
 					"some_var": {
-						Name:      "some_var",
-						Sensitive: true,
-						Default:   cty.StringVal("foo"),
+						Name:           "some_var",
+						Sensitive:      true,
+						Default:        cty.StringVal("foo"),
+						Type:           cty.String,
+						ConstraintType: cty.String,
 					},
 					// Avoid double marking a value
 					"some_other_var": {
-						Name:      "some_other_var",
-						Sensitive: true,
-						Default:   cty.StringVal("bar"),
+						Name:           "some_other_var",
+						Sensitive:      true,
+						Default:        cty.StringVal("bar"),
+						Type:           cty.String,
+						ConstraintType: cty.String,
 					},
 				},
 			},
@@ -120,7 +124,7 @@ func TestEvaluatorGetInputVariable(t *testing.T) {
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil)
+	scope := evaluator.Scope(data, nil, nil)
 
 	want := cty.StringVal("bar").Mark(marks.Sensitive)
 	got, diags := scope.Data.GetInputVariable(addrs.InputVariable{
@@ -193,85 +197,83 @@ func TestEvaluatorGetResource(t *testing.T) {
 			},
 		},
 		State: stateSync,
-		Schemas: &Schemas{
-			Providers: map[addrs.Provider]*ProviderSchema{
-				addrs.NewDefaultProvider("test"): {
-					Provider: &configschema.Block{},
-					ResourceTypes: map[string]*configschema.Block{
-						"test_resource": {
-							Attributes: map[string]*configschema.Attribute{
-								"id": {
-									Type:     cty.String,
-									Computed: true,
-								},
-								"value": {
-									Type:      cty.String,
-									Computed:  true,
-									Sensitive: true,
-								},
+		Plugins: schemaOnlyProvidersForTesting(map[addrs.Provider]*ProviderSchema{
+			addrs.NewDefaultProvider("test"): {
+				Provider: &configschema.Block{},
+				ResourceTypes: map[string]*configschema.Block{
+					"test_resource": {
+						Attributes: map[string]*configschema.Attribute{
+							"id": {
+								Type:     cty.String,
+								Computed: true,
 							},
-							BlockTypes: map[string]*configschema.NestedBlock{
-								"nesting_list": {
-									Block: configschema.Block{
-										Attributes: map[string]*configschema.Attribute{
-											"value":           {Type: cty.String, Optional: true},
-											"sensitive_value": {Type: cty.String, Optional: true, Sensitive: true},
-										},
+							"value": {
+								Type:      cty.String,
+								Computed:  true,
+								Sensitive: true,
+							},
+						},
+						BlockTypes: map[string]*configschema.NestedBlock{
+							"nesting_list": {
+								Block: configschema.Block{
+									Attributes: map[string]*configschema.Attribute{
+										"value":           {Type: cty.String, Optional: true},
+										"sensitive_value": {Type: cty.String, Optional: true, Sensitive: true},
 									},
-									Nesting: configschema.NestingList,
 								},
-								"nesting_map": {
-									Block: configschema.Block{
-										Attributes: map[string]*configschema.Attribute{
-											"foo": {Type: cty.String, Optional: true, Sensitive: true},
-										},
+								Nesting: configschema.NestingList,
+							},
+							"nesting_map": {
+								Block: configschema.Block{
+									Attributes: map[string]*configschema.Attribute{
+										"foo": {Type: cty.String, Optional: true, Sensitive: true},
 									},
-									Nesting: configschema.NestingMap,
 								},
-								"nesting_set": {
-									Block: configschema.Block{
-										Attributes: map[string]*configschema.Attribute{
-											"baz": {Type: cty.String, Optional: true, Sensitive: true},
-										},
+								Nesting: configschema.NestingMap,
+							},
+							"nesting_set": {
+								Block: configschema.Block{
+									Attributes: map[string]*configschema.Attribute{
+										"baz": {Type: cty.String, Optional: true, Sensitive: true},
 									},
-									Nesting: configschema.NestingSet,
 								},
-								"nesting_single": {
-									Block: configschema.Block{
-										Attributes: map[string]*configschema.Attribute{
-											"boop": {Type: cty.String, Optional: true, Sensitive: true},
-										},
+								Nesting: configschema.NestingSet,
+							},
+							"nesting_single": {
+								Block: configschema.Block{
+									Attributes: map[string]*configschema.Attribute{
+										"boop": {Type: cty.String, Optional: true, Sensitive: true},
 									},
-									Nesting: configschema.NestingSingle,
 								},
-								"nesting_nesting": {
-									Block: configschema.Block{
-										BlockTypes: map[string]*configschema.NestedBlock{
-											"nesting_list": {
-												Block: configschema.Block{
-													Attributes: map[string]*configschema.Attribute{
-														"value":           {Type: cty.String, Optional: true},
-														"sensitive_value": {Type: cty.String, Optional: true, Sensitive: true},
-													},
+								Nesting: configschema.NestingSingle,
+							},
+							"nesting_nesting": {
+								Block: configschema.Block{
+									BlockTypes: map[string]*configschema.NestedBlock{
+										"nesting_list": {
+											Block: configschema.Block{
+												Attributes: map[string]*configschema.Attribute{
+													"value":           {Type: cty.String, Optional: true},
+													"sensitive_value": {Type: cty.String, Optional: true, Sensitive: true},
 												},
-												Nesting: configschema.NestingList,
 											},
+											Nesting: configschema.NestingList,
 										},
 									},
-									Nesting: configschema.NestingSingle,
 								},
+								Nesting: configschema.NestingSingle,
 							},
 						},
 					},
 				},
 			},
-		},
+		}),
 	}
 
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil)
+	scope := evaluator.Scope(data, nil, nil)
 
 	want := cty.ObjectVal(map[string]cty.Value{
 		"id": cty.StringVal("foo"),
@@ -430,13 +432,13 @@ func TestEvaluatorGetResource_changes(t *testing.T) {
 			},
 		},
 		State:   stateSync,
-		Schemas: schemas,
+		Plugins: schemaOnlyProvidersForTesting(schemas.Providers),
 	}
 
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil)
+	scope := evaluator.Scope(data, nil, nil)
 
 	want := cty.ObjectVal(map[string]cty.Value{
 		"id":              cty.StringVal("foo"),
@@ -471,7 +473,7 @@ func TestEvaluatorGetModule(t *testing.T) {
 	data := &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope := evaluator.Scope(data, nil)
+	scope := evaluator.Scope(data, nil, nil)
 	want := cty.ObjectVal(map[string]cty.Value{"out": cty.StringVal("bar").Mark(marks.Sensitive)})
 	got, diags := scope.Data.GetModule(addrs.ModuleCall{
 		Name: "mod",
@@ -499,7 +501,7 @@ func TestEvaluatorGetModule(t *testing.T) {
 	data = &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope = evaluator.Scope(data, nil)
+	scope = evaluator.Scope(data, nil, nil)
 	want = cty.ObjectVal(map[string]cty.Value{"out": cty.StringVal("baz").Mark(marks.Sensitive)})
 	got, diags = scope.Data.GetModule(addrs.ModuleCall{
 		Name: "mod",
@@ -517,7 +519,7 @@ func TestEvaluatorGetModule(t *testing.T) {
 	data = &evaluationStateData{
 		Evaluator: evaluator,
 	}
-	scope = evaluator.Scope(data, nil)
+	scope = evaluator.Scope(data, nil, nil)
 	want = cty.ObjectVal(map[string]cty.Value{"out": cty.StringVal("baz").Mark(marks.Sensitive)})
 	got, diags = scope.Data.GetModule(addrs.ModuleCall{
 		Name: "mod",

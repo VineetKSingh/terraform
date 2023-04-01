@@ -45,7 +45,7 @@ func (p *Parser) loadConfigFile(path string, override bool) (*File, hcl.Diagnost
 	// We'll load the experiments first because other decoding logic in the
 	// loop below might depend on these experiments.
 	var expDiags hcl.Diagnostics
-	file.ActiveExperiments, expDiags = sniffActiveExperiments(body)
+	file.ActiveExperiments, expDiags = sniffActiveExperiments(body, p.allowExperiments)
 	diags = append(diags, expDiags...)
 
 	content, contentDiags := body.Content(configFileSchema)
@@ -70,6 +70,13 @@ func (p *Parser) loadConfigFile(path string, override bool) (*File, hcl.Diagnost
 					diags = append(diags, cfgDiags...)
 					if backendCfg != nil {
 						file.Backends = append(file.Backends, backendCfg)
+					}
+
+				case "cloud":
+					cloudCfg, cfgDiags := decodeCloudBlock(innerBlock)
+					diags = append(diags, cfgDiags...)
+					if cloudCfg != nil {
+						file.CloudConfigs = append(file.CloudConfigs, cloudCfg)
 					}
 
 				case "required_providers":
@@ -135,14 +142,14 @@ func (p *Parser) loadConfigFile(path string, override bool) (*File, hcl.Diagnost
 			}
 
 		case "resource":
-			cfg, cfgDiags := decodeResourceBlock(block)
+			cfg, cfgDiags := decodeResourceBlock(block, override)
 			diags = append(diags, cfgDiags...)
 			if cfg != nil {
 				file.ManagedResources = append(file.ManagedResources, cfg)
 			}
 
 		case "data":
-			cfg, cfgDiags := decodeDataBlock(block)
+			cfg, cfgDiags := decodeDataBlock(block, override, false)
 			diags = append(diags, cfgDiags...)
 			if cfg != nil {
 				file.DataResources = append(file.DataResources, cfg)
@@ -153,6 +160,13 @@ func (p *Parser) loadConfigFile(path string, override bool) (*File, hcl.Diagnost
 			diags = append(diags, cfgDiags...)
 			if cfg != nil {
 				file.Moved = append(file.Moved, cfg)
+			}
+
+		case "check":
+			cfg, cfgDiags := decodeCheckBlock(block, override)
+			diags = append(diags, cfgDiags...)
+			if cfg != nil {
+				file.Checks = append(file.Checks, cfg)
 			}
 
 		default:
@@ -245,6 +259,10 @@ var configFileSchema = &hcl.BodySchema{
 		{
 			Type: "moved",
 		},
+		{
+			Type:       "check",
+			LabelNames: []string{"name"},
+		},
 	},
 }
 
@@ -260,6 +278,9 @@ var terraformBlockSchema = &hcl.BodySchema{
 		{
 			Type:       "backend",
 			LabelNames: []string{"type"},
+		},
+		{
+			Type: "cloud",
 		},
 		{
 			Type: "required_providers",
