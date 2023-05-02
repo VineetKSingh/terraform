@@ -10,6 +10,10 @@ NEW FEATURES:
     Unlike the existing `precondition` and `postcondition` blocks, Terraform will not halt execution should the scoped data block fail or error or if any of the assertions fail. 
     This allows practitioners to continually validate the state of their infrastructure outside the usual lifecycle management cycle. 
 
+* Adds a new `plantimestamp` function that returns the timestamp at plan time. This is similar to the `timestamp` function which returns the timestamp at apply time.
+* Adds a new `strcontains` function that checks whether a given string contains a given substring. [GH-33069]
+
+
 UPGRADE NOTES:
 
 * This is the last version of Terraform for which macOS 10.13 High Sierra or 10.14 Mojave are officially supported. Future Terraform versions may not function correctly on these older versions of macOS.
@@ -22,7 +26,7 @@ ENHANCEMENTS:
 
 * Terraform CLI's local operations mode will now attempt to persist state snapshots to the state storage backend periodically during the apply step, thereby reducing the window for lost data if the Terraform process is aborted unexpectedly. [GH-32680]
 * If Terraform CLI receives SIGINT (or its equivalent on non-Unix platforms) during the apply step then it will immediately try to persist the latest state snapshot to the state storage backend, with the assumption that a graceful shutdown request often typically followed by a hard abort some time later if the graceful shutdown doesn't complete fast enough. [GH-32680]
-* `pg` backend: Now accepts the environment variable `PGDATABASE` as an alternative way to specify the connection string. [GH-32526]
+* `pg` backend: Now supports the `PG_CONN_STR`, `PG_SCHEMA_NAME`, `PG_SKIP_SCHEMA_CREATION`, `PG_SKIP_TABLE_CREATION` and `PG_SKIP_INDEX_CREATION` environment variables. [GH-33045]
 
 BUG FIXES:
 

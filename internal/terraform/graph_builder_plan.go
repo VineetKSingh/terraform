@@ -191,7 +191,9 @@ func (b *PlanGraphBuilder) Steps() []GraphTransformer {
 
 		// DestroyEdgeTransformer is only required during a plan so that the
 		// TargetsTransformer can determine which nodes to keep in the graph.
-		&DestroyEdgeTransformer{},
+		&DestroyEdgeTransformer{
+			Operation: b.Operation,
+		},
 
 		&pruneUnusedNodesTransformer{
 			skip: b.Operation != walkPlanDestroy,
@@ -307,6 +309,13 @@ func (b *PlanGraphBuilder) initImport() {
 			// as the new state, and users are not expecting the import process
 			// to update any other instances in state.
 			skipRefresh: true,
+
+			// If we get here, we know that we are in legacy import mode, and
+			// that the user has run the import command rather than plan.
+			// This flag must be propagated down to the
+			// NodePlannableResourceInstance so we can ignore the new import
+			// behaviour.
+			legacyImportMode: true,
 		}
 	}
 }

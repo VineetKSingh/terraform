@@ -37,6 +37,10 @@ func (c *Changes) Empty() bool {
 		if res.Action != NoOp || res.Moved() {
 			return false
 		}
+
+		if res.Importing {
+			return false
+		}
 	}
 
 	for _, out := range c.Outputs {
@@ -301,9 +305,10 @@ func (rc *ResourceInstanceChange) Simplify(destroying bool) *ResourceInstanceCha
 				Private:      rc.Private,
 				ProviderAddr: rc.ProviderAddr,
 				Change: Change{
-					Action: Delete,
-					Before: rc.Before,
-					After:  cty.NullVal(rc.Before.Type()),
+					Action:    Delete,
+					Before:    rc.Before,
+					After:     cty.NullVal(rc.Before.Type()),
+					Importing: rc.Importing,
 				},
 			}
 		default:
@@ -313,9 +318,10 @@ func (rc *ResourceInstanceChange) Simplify(destroying bool) *ResourceInstanceCha
 				Private:      rc.Private,
 				ProviderAddr: rc.ProviderAddr,
 				Change: Change{
-					Action: NoOp,
-					Before: rc.Before,
-					After:  rc.Before,
+					Action:    NoOp,
+					Before:    rc.Before,
+					After:     rc.Before,
+					Importing: rc.Importing,
 				},
 			}
 		}
@@ -328,9 +334,10 @@ func (rc *ResourceInstanceChange) Simplify(destroying bool) *ResourceInstanceCha
 				Private:      rc.Private,
 				ProviderAddr: rc.ProviderAddr,
 				Change: Change{
-					Action: NoOp,
-					Before: rc.Before,
-					After:  rc.Before,
+					Action:    NoOp,
+					Before:    rc.Before,
+					After:     rc.Before,
+					Importing: rc.Importing,
 				},
 			}
 		case CreateThenDelete, DeleteThenCreate:
@@ -340,9 +347,10 @@ func (rc *ResourceInstanceChange) Simplify(destroying bool) *ResourceInstanceCha
 				Private:      rc.Private,
 				ProviderAddr: rc.ProviderAddr,
 				Change: Change{
-					Action: Create,
-					Before: cty.NullVal(rc.After.Type()),
-					After:  rc.After,
+					Action:    Create,
+					Before:    cty.NullVal(rc.After.Type()),
+					After:     rc.After,
+					Importing: rc.Importing,
 				},
 			}
 		}
@@ -505,6 +513,10 @@ type Change struct {
 	// either as the values themselves or as nested elements within known
 	// collections/structures.
 	Before, After cty.Value
+
+	// Importing is true if the resource is being imported as part of the
+	// change.
+	Importing bool
 }
 
 // Encode produces a variant of the reciever that has its change values
@@ -544,5 +556,6 @@ func (c *Change) Encode(ty cty.Type) (*ChangeSrc, error) {
 		After:          afterDV,
 		BeforeValMarks: beforeVM,
 		AfterValMarks:  afterVM,
+		Importing:      c.Importing,
 	}, nil
 }
