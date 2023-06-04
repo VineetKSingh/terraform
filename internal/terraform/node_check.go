@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package terraform
 
 import (
@@ -179,4 +182,23 @@ func (n *nodeCheckAssert) Execute(ctx EvalContext, _ walkOperation) tfdiags.Diag
 
 func (n *nodeCheckAssert) Name() string {
 	return n.addr.String() + " (assertions)"
+}
+
+var (
+	_ GraphNodeExecutable = (*nodeCheckStart)(nil)
+)
+
+// We need to ensure that any nested data sources execute after all other
+// resource changes have been applied. This node acts as a single point of
+// dependency that can enforce this ordering.
+type nodeCheckStart struct{}
+
+func (n *nodeCheckStart) Execute(context EvalContext, operation walkOperation) tfdiags.Diagnostics {
+	// This node doesn't actually do anything, except simplify the underlying
+	// graph structure.
+	return nil
+}
+
+func (n *nodeCheckStart) Name() string {
+	return "(execute checks)"
 }

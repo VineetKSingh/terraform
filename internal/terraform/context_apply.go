@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package terraform
 
 import (
@@ -33,6 +36,19 @@ func (c *Context) Apply(plan *plans.Plan, config *configs.Config) (*states.State
 			`The given plan is incomplete due to errors during planning, and so it cannot be applied.`,
 		))
 		return nil, diags
+	}
+
+	for _, rc := range plan.Changes.Resources {
+		// Import is a no-op change during an apply (all the real action happens during the plan) but we'd
+		// like to show some helpful output that mirrors the way we show other changes.
+		if rc.Importing != nil {
+			for _, h := range c.hooks {
+				// In future, we may need to call PostApplyImport separately elsewhere in the apply
+				// operation. For now, though, we'll call Pre and Post hooks together.
+				h.PreApplyImport(rc.Addr, *rc.Importing)
+				h.PostApplyImport(rc.Addr, *rc.Importing)
+			}
+		}
 	}
 
 	graph, operation, diags := c.applyGraph(plan, config, true)

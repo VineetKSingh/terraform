@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package terraform
 
 import (
@@ -90,7 +93,10 @@ func (t *checkTransformer) transform(g *Graph, cfg *configs.Config, allNodes []d
 							// Make sure we report our checks before we execute any
 							// embedded data resource.
 							g.Connect(dag.BasicEdge(other, report))
-							continue
+
+							// There's at most one embedded data source, and
+							// we've found it so stop looking.
+							break
 						}
 					}
 				}
